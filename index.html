@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Personal Authenticator</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f5f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 320px; text-align: center; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        button { width: 100%; padding: 10px; background: #007aff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .token { font-size: 42px; font-weight: bold; color: #007aff; letter-spacing: 2px; margin: 20px 0 10px; font-variant-numeric: tabular-nums; }
+        .progress-bar { width: 100%; height: 5px; background: #eee; border-radius: 3px; overflow: hidden; }
+        .progress { height: 100%; background: #34c759; width: 100%; transition: width 1s linear; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Authenticator</h2>
+    <input type="text" id="secretInput" placeholder="Enter Base32 Secret Key (e.g. JBSWY3DPEHPK3PXP)">
+    <button onclick="startAuthenticator()">Generate Codes</button>
+    
+    <div id="tokenDisplay" class="token">000 000</div>
+    <div class="progress-bar"><div id="progressBar" class="progress"></div></div>
+</div>
+
+<script>
+// 1. Decode Base32 string to Uint8Array (required for Web Crypto API)
+function base32ToBytes(base32) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let bits = '';
+    let bytes = [];
+    
+    const cleanBase32 = base32.replace(/=+$/, '').replace(/\s/g, '').toUpperCase();
+    for (let i = 0; i < cleanBase32.length; i++) {
+        const val = alphabet.indexOf(cleanBase32.charAt(i));
+        if (val === -1) throw new Error('Invalid Base32 character');
+        bits += val.toString(2).padStart(5, '0');
+    }
+    
+    for (let i = 0; i + 8 <= bits.length; i += 8) {
+        bytes.push(parseInt(bits.substring(i, i + 8), 2));
+    }
+    return new Uint8Array(bytes);
+}
+
+// 2. Core TOTP Generation Logic using Browser Web Crypto API
+async function generateTOTP(secretBase32) {
+    try {
+        const keyBytes = base32ToBytes(secretBase32);
+        
+        // Calculate the current 30-second time step
+        const epoch = Math.floor(Date.now() / 1000);
+        const timeStep = Math.floor(epoch / 30);
+        
+        // Put time step into an 8-byte ArrayBuffer
+        const buffer = new ArrayBuffer(8);
+        const view = new DataView(buffer);
+        view.setUint32(4, timeStep, false); // Write to the lower 4 bytes (Big Endian)
+
+        // Import the raw secret key into Web Crypto
+        const cryptoKey = await window.crypto.subtle.importKey(
+            "raw", 
+            keyBytes, 
+            { name: "HMAC", hash: { name: "SHA-1" } }, 
+            false, 
+            ["sign"]
+        );
+
+        // Sign the time step with HMAC-SHA1
+        const hmacResult = await window.crypto.subtle.sign("HMAC", cryptoKey, buffer);
+        const hmacBytes = new Uint8Array(hmacResult);
+
+        // Dynamic Truncation
+        const offset = hmacBytes[hmacBytes.length - 1] & 0xf;
+        const code = (
+            ((hmacBytes[offset] & 0x7f) << 24) |
+            ((hmacBytes[offset + 1] & 0xff) << 16) |
+            ((hmacBytes[offset + 2] & 0xff) << 8) |
+            (hmacBytes[offset + 3] & 0xff)
+        ) % 1000000;
+
+        return code.toString().padStart(6, '0');
+    } catch (e) {
+        return "ERROR";
+    }
+}
+
+// 3. App UI Controller & Loop
+let intervalId = null;
+
+function startAuthenticator() {
+    if (intervalId) clearInterval(intervalId);
+    
+    const updateUI = async () => {
+        const secret = document.getElementById('secretInput').value;
+        if (!secret) return;
+
+        // Generate and format code (e.g., 123 456)
+        const code = await generateTOTP(secret);
+        if (code === "ERROR") {
+            document.getElementById('tokenDisplay').innerText = "INVALID KEY";
+            return;
+        }
+        document.getElementById('tokenDisplay').innerText = code.slice(0,3) + ' ' + code.slice(3);
+
+        // Update countdown progress bar
+        const secondsLeft = 30 - (Math.floor(Date.now() / 1000) % 30);
+        document.getElementById('progressBar').style.width = (secondsLeft / 30 * 100) + '%';
+    };
+
+    updateUI();
+    intervalId = setInterval(updateUI, 1000); // Check and refresh every second
+}
+</script>
+</body>
+</html>
