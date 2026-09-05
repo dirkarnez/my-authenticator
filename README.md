@@ -4,6 +4,7 @@ F**k [Microsoft Authenticator](https://www.microsoft.com/zh-hk/security/mobile-a
 
 ### TODOs
 - [ ] Check is it portable
+- [ ] https://kassmiw.github.io/TOTP/
 
 ```
 Type: TOTP
